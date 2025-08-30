@@ -1,0 +1,18 @@
+# 敏感資訊
+.env
+config.js
+
+# 系統檔案
+.DS_Store
+Thumbs.db
+
+# IDE 設定
+.vscode/
+.idea/
+
+# 日誌檔案
+*.log
+
+# 暫存檔案
+*.tmp
+*.temp
