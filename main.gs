@@ -47,7 +47,10 @@ function doPost(e) {
           (event.message.type === 'text' || event.message.type === 'audio')) {
         
         console.log('✅ 符合處理條件，開始處理訊息');
-        processMessage(event);
+        // 正常模式
+        // processMessage(event);
+        // 調試模式 - 可手動切換
+        debugProcessMessage(event);
         break; // 只處理第一個符合的訊息
       } else {
         console.log('⚠️ 不符合處理條件，跳過');
@@ -102,8 +105,12 @@ function processMessage(event) {
 
     // 解析活動資訊
     console.log('🚀 開始解析活動資訊...');
+    console.log('📝 輸入文字:', text);
     const events = parseEventWithStrategy(text, isVoice);
     console.log('📅 解析結果:', events ? `${events.length} 個事件` : '解析失敗');
+    if (events && events.length > 0) {
+      console.log('📅 事件詳情:', events);
+    }
 
     // 生成回覆
     let replyText;
@@ -177,7 +184,14 @@ function processMessage(event) {
     }
 
     // 發送回覆
-    sendReply(event.replyToken, replyText);
+    console.log('📤 準備發送回覆...');
+    const replySuccess = sendReply(event.replyToken, replyText);
+    
+    if (replySuccess) {
+      console.log('✅ 回覆發送成功');
+    } else {
+      console.error('❌ 回覆發送失敗');
+    }
 
     // 清理過期記錄
     cleanupProcessedMessages();
@@ -899,7 +913,20 @@ function sendReply(replyToken, message) {
   try {
     console.log('📤 發送 LINE 回覆...');
     console.log('🎫 replyToken:', replyToken);
-    console.log('💬 回覆內容:', message.substring(0, 200) + (message.length > 200 ? '...' : ''));
+    console.log('💬 回覆內容長度:', message.length);
+    console.log('💬 回覆內容預覽:', message.substring(0, 100) + (message.length > 100 ? '...' : ''));
+
+    // 驗證 replyToken
+    if (!replyToken || replyToken.trim().length === 0) {
+      console.error('❌ replyToken 無效 或 空白');
+      return false;
+    }
+
+    // 驗證 ACCESS_TOKEN
+    if (!LINE_CHANNEL_ACCESS_TOKEN || LINE_CHANNEL_ACCESS_TOKEN === 'YOUR_LINE_CHANNEL_ACCESS_TOKEN') {
+      console.error('❌ LINE_CHANNEL_ACCESS_TOKEN 未設定');
+      return false;
+    }
 
     const url = 'https://api.line.me/v2/bot/message/reply';
     const payload = {
@@ -909,6 +936,12 @@ function sendReply(replyToken, message) {
         text: message
       }]
     };
+
+    console.log('📦 發送 payload:', {
+      replyToken: replyToken.substring(0, 20) + '...',
+      messageLength: message.length,
+      messageType: 'text'
+    });
 
     const options = {
       method: 'POST',
@@ -924,12 +957,20 @@ function sendReply(replyToken, message) {
     const responseText = response.getContentText();
     
     console.log('📈 LINE API 回應狀態:', statusCode);
-    console.log('📄 LINE API 回應內容:', responseText.substring(0, 200));
+    console.log('📄 LINE API 回應內容:', responseText);
 
-    return statusCode === 200;
+    if (statusCode === 200) {
+      console.log('✅ LINE 回覆成功');
+      return true;
+    } else {
+      console.error('❌ LINE 回覆失敗，狀態碼:', statusCode);
+      console.error('❌ 錯誤詳情:', responseText);
+      return false;
+    }
 
   } catch (error) {
     console.error('🚨 發送回覆錯誤:', error);
+    console.error('🚨 錯誤堆疊:', error.stack);
     return false;
   }
 }
@@ -1150,6 +1191,78 @@ function convertChineseNumber(str) {
 
 // === 測試和管理函數 ===
 
+// 測試 LINE API 連線的函數
+function testLineAPI() {
+  console.log('🧪 測試 LINE API 連線...');
+  
+  // 檢查 ACCESS_TOKEN
+  if (!LINE_CHANNEL_ACCESS_TOKEN || LINE_CHANNEL_ACCESS_TOKEN === 'YOUR_LINE_CHANNEL_ACCESS_TOKEN') {
+    console.error('❌ LINE_CHANNEL_ACCESS_TOKEN 未設定');
+    return false;
+  }
+  
+  // 測試發送訊息給自己（使用 push message）
+  const url = 'https://api.line.me/v2/bot/message/push';
+  const payload = {
+    to: TARGET_USER_ID, // 發送給目標用戶
+    messages: [{
+      type: 'text',
+      text: '🧪 LINE API 連線測試成功！時間: ' + new Date().toLocaleString('zh-TW')
+    }]
+  };
+  
+  const options = {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+    },
+    payload: JSON.stringify(payload)
+  };
+  
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const statusCode = response.getResponseCode();
+    const responseText = response.getContentText();
+    
+    console.log('📈 LINE Push API 回應狀態:', statusCode);
+    console.log('📄 LINE Push API 回應內容:', responseText);
+    
+    if (statusCode === 200) {
+      console.log('✅ LINE API 連線正常');
+      return true;
+    } else {
+      console.log('❌ LINE API 連線異常');
+      return false;
+    }
+  } catch (error) {
+    console.error('🚨 LINE API 測試錯誤:', error);
+    return false;
+  }
+}
+
+// 簡化調試版本 - 直接回覆收到的文字
+function debugProcessMessage(event) {
+  try {
+    const text = event.message.text || '無文字訊息';
+    const messageId = event.message.id || 'unknown';
+    
+    console.log('🔍 調試模式 - 處理訊息:', text);
+    
+    const debugReply = `🤖 調試回覆\n\n📝 收到訊息: ${text}\n🎫 訊息 ID: ${messageId}\n⏰ 時間: ${new Date().toLocaleString('zh-TW')}`;
+    
+    console.log('📤 調試模式發送回覆:', debugReply);
+    
+    return sendReply(event.replyToken, debugReply);
+    
+  } catch (error) {
+    console.error('🚨 調試模式錯誤:', error);
+    return false;
+  }
+}
+
+// 可手動在 doPost 中替換 processMessage 為 debugProcessMessage 來測試
+
 // 測試強化時間格式支援
 function testAdvancedTimeFormats() {
   console.log('=== 強化時間格式測試 ===');
@@ -1165,10 +1278,10 @@ function testAdvancedTimeFormats() {
     '下週三9:15瑜伽課',
     '10/1 23:00夜宵',
     
-    // 中文數字
-    '下週五下午三點半開會',
-    '明天晚上八點一刻電影',
-    '週六上午十一點三刻課程',
+    // 現代中文時間表達
+    '下週五下午3點半開會',
+    '明天晚上8點15分電影',
+    '週六上午11:45課程',
     
     // 時間範圍
     '明天下午2點到4點會議',
@@ -1213,8 +1326,8 @@ function testCompleteSystem() {
     '下週二與下下週二，下午七點都有健身房課程。地點在小琉球',
     // 新增強化時間格式測試
     '明天14:30開重要會議',
-    '下週三上午九點半瑜伽課',
-    '10/5 晚上八點一刻聚餐'
+    '下週三上匆9:30瑜伽課',
+    '10/5 晚上8:15聚餐'
   ];
 
   testMessages.forEach((text, index) => {
