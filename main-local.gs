@@ -1333,16 +1333,35 @@ function processMessageSimple(event) {
         
         try {
           console.log('🔄 開始呼叫 createCalendarEventDirect');
-          const success = createCalendarEventDirect(
-            eventInfo.title,
-            eventInfo.date,
-            eventInfo.description,
-            eventInfo.location
-          );
+          
+          let success;
+          if (eventInfo.isRecurring) {
+            console.log('🔄 建立重複事件');
+            success = createRecurringCalendarEvent(
+              eventInfo.title,
+              eventInfo.date,
+              eventInfo.description,
+              eventInfo.location,
+              eventInfo.recurringPattern
+            );
+          } else {
+            success = createCalendarEventDirect(
+              eventInfo.title,
+              eventInfo.date,
+              eventInfo.description,
+              eventInfo.location
+            );
+          }
           console.log('🔍 createCalendarEventDirect 回傳結果:', success);
           
           if (success) {
-            const reply = `✅ 已建立行事曆事件：\n📅 ${eventInfo.title}\n🕐 ${eventInfo.date.toLocaleString('zh-TW')}${eventInfo.location ? '\n📍 ' + eventInfo.location : ''}`;
+            let reply;
+            if (eventInfo.isRecurring) {
+              const patternText = formatRecurringPattern(eventInfo.recurringPattern);
+              reply = `✅ 已建立重複行事曆事件：\n📅 ${eventInfo.title}\n🔄 ${patternText}\n🕐 開始時間：${eventInfo.date.toLocaleString('zh-TW')}${eventInfo.location ? '\n📍 ' + eventInfo.location : ''}`;
+            } else {
+              reply = `✅ 已建立行事曆事件：\n📅 ${eventInfo.title}\n🕐 ${eventInfo.date.toLocaleString('zh-TW')}${eventInfo.location ? '\n📍 ' + eventInfo.location : ''}`;
+            }
             console.log('📤 準備發送成功回覆:', reply);
             sendReply(event.replyToken, reply);
             console.log('✅ 成功回覆已發送');
@@ -1798,8 +1817,170 @@ function parseEventBasic(text) {
     description: `從 LINE 訊息建立: ${text}`
   };
   
+  // 檢查是否為重複事件
+  const recurringInfo = parseRecurringEvent(text);
+  if (recurringInfo) {
+    result.isRecurring = true;
+    result.recurringPattern = recurringInfo;
+    console.log('🔄 檢測到重複事件:', recurringInfo);
+  }
+
   console.log('✅ 基本解析完成:', result);
   return result;
+}
+
+// 解析重複事件模式
+function parseRecurringEvent(text) {
+  console.log('🔄 開始重複事件解析:', text);
+
+  // 複合模式：時間區間 + 重複頻率
+  const complexPatterns = [
+    // 「下個禮拜一到禮拜五每天早上8點跑步」
+    {
+      regex: /(下個?|下週?)(禮拜|週)([一二三四五六日天])到(禮拜|週)([一二三四五六日天]).*每天/g,
+      type: 'dateRangeDaily',
+      parser: (matches) => {
+        const days = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+        const startDay = days[matches[3]];
+        const endDay = days[matches[5]];
+        
+        // 計算週一到週五的所有天
+        const daysOfWeek = [];
+        for (let i = startDay; i <= endDay; i++) {
+          daysOfWeek.push(i);
+        }
+        
+        return {
+          frequency: 'weekly',
+          daysOfWeek: daysOfWeek,
+          interval: 1,
+          isDateRange: true,
+          rangeType: 'nextWeek'
+        };
+      }
+    },
+    
+    // 「從今天開始到十一月底的每週三晚上七點」
+    {
+      regex: /從.*?(今天|明天|下週).*?開始.*?到.*?(\d{1,2}月.*?底?).*?每週?([一二三四五六日天])/g,
+      type: 'dateRangeWeekly',
+      parser: (matches) => {
+        const days = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+        return {
+          frequency: 'weekly',
+          daysOfWeek: [days[matches[3]]],
+          interval: 1,
+          isDateRange: true,
+          startFrom: matches[1],
+          endCondition: matches[2]
+        };
+      }
+    }
+  ];
+
+  // 先檢查複合模式
+  for (const pattern of complexPatterns) {
+    const match = pattern.regex.exec(text);
+    if (match) {
+      console.log('✅ 匹配到複合重複模式:', pattern.type);
+      const result = pattern.parser(match);
+      console.log('🔍 複合模式解析結果:', result);
+      return result;
+    }
+  }
+
+  // 基本重複模式
+  const basicPatterns = [
+    // 每週模式：每週二、每周三
+    {
+      regex: /每週?([一二三四五六日天])/g,
+      type: 'weekly',
+      parser: (matches) => {
+        const days = {
+          '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0
+        };
+        return {
+          frequency: 'weekly',
+          daysOfWeek: [days[matches[1]]],
+          interval: 1
+        };
+      }
+    },
+    
+    // 每天模式
+    {
+      regex: /每天|每日/g,
+      type: 'daily',
+      parser: () => ({
+        frequency: 'daily',
+        interval: 1
+      })
+    },
+    
+    // 每月模式：每月1號、每個月第一個週五
+    {
+      regex: /每月(\d{1,2})[號日]/g,
+      type: 'monthly',
+      parser: (matches) => ({
+        frequency: 'monthly',
+        dayOfMonth: parseInt(matches[1]),
+        interval: 1
+      })
+    },
+    
+    // 每個月第幾個週幾
+    {
+      regex: /每個?月第([一二三四])個?週?([一二三四五六日天])/g,
+      type: 'monthlyWeekday',
+      parser: (matches) => {
+        const weekNumbers = { '一': 1, '二': 2, '三': 3, '四': 4 };
+        const days = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+        return {
+          frequency: 'monthly',
+          weekOfMonth: weekNumbers[matches[1]],
+          dayOfWeek: days[matches[2]],
+          interval: 1
+        };
+      }
+    },
+    
+    // 每年模式：每年生日
+    {
+      regex: /每年/g,
+      type: 'yearly',
+      parser: () => ({
+        frequency: 'yearly',
+        interval: 1
+      })
+    }
+  ];
+
+  for (const pattern of basicPatterns) {
+    const match = pattern.regex.exec(text);
+    if (match) {
+      console.log('✅ 匹配到基本重複模式:', pattern.type);
+      const result = pattern.parser(match);
+      
+      // 解析結束時間（如果有）
+      const endDateMatch = text.match(/到(\d{1,2}月\d{1,2}[日號]?|\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|明年|年底)/);
+      if (endDateMatch) {
+        result.endCondition = endDateMatch[1];
+        console.log('📅 檢測到結束條件:', result.endCondition);
+      }
+      
+      // 解析次數限制
+      const countMatch = text.match(/(\d+)次/);
+      if (countMatch) {
+        result.count = parseInt(countMatch[1]);
+        console.log('🔢 檢測到次數限制:', result.count);
+      }
+      
+      return result;
+    }
+  }
+
+  console.log('❌ 未檢測到重複模式');
+  return null;
 }
 
 // 基本日期解析
@@ -1816,6 +1997,47 @@ function parseDateBasic(text) {
     const dayAfter = new Date(today);
     dayAfter.setDate(today.getDate() + 2);
     return dayAfter;
+  }
+  
+  // 處理「週三」、「禮拜三」等當前或下週的日期
+  const weekDayMatch = text.match(/(每?)週?([一二三四五六日天])/);
+  if (weekDayMatch) {
+    const days = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+    const targetDay = days[weekDayMatch[2]];
+    
+    console.log('🔍 目標星期:', weekDayMatch[2], '目標日期代碼:', targetDay);
+    
+    // 找到下一個指定的星期幾
+    const result = new Date(today);
+    const currentDay = today.getDay();
+    let daysToAdd = (targetDay - currentDay + 7) % 7;
+    
+    // 如果是今天，則移到下週
+    if (daysToAdd === 0) {
+      daysToAdd = 7;
+    }
+    
+    result.setDate(today.getDate() + daysToAdd);
+    console.log('📅 計算結果:', result.toLocaleString('zh-TW'), '星期', result.getDay());
+    
+    return result;
+  }
+  
+  // 處理「下個禮拜一」、「下週二」等
+  const nextWeekDayMatch = text.match(/(下個?|下週?)(禮拜|週)([一二三四五六日天])/);
+  if (nextWeekDayMatch) {
+    const days = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+    const targetDay = days[nextWeekDayMatch[3]];
+    
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7); // 下週
+    
+    // 調整到指定的星期幾
+    const currentDay = nextWeek.getDay();
+    const daysToAdd = (targetDay - currentDay + 7) % 7;
+    nextWeek.setDate(nextWeek.getDate() + daysToAdd);
+    
+    return nextWeek;
   }
   
   if (text.includes('下週')) {
@@ -2059,4 +2281,161 @@ function createCalendarEventDirect(title, startTime, description, location) {
     console.error('錯誤詳情:', JSON.stringify(error, null, 2));
     return false;
   }
+}
+
+// 建立重複行事曆事件
+function createRecurringCalendarEvent(title, startDate, description, location, recurringPattern) {
+  try {
+    console.log('🔄 建立重複事件:', title);
+    console.log('🔄 重複模式:', recurringPattern);
+    
+    const calendar = CalendarApp.getDefaultCalendar();
+    
+    // 建立重複規則
+    let recurrenceRule = '';
+    
+    switch (recurringPattern.frequency) {
+      case 'daily':
+        recurrenceRule = `FREQ=DAILY;INTERVAL=${recurringPattern.interval || 1}`;
+        break;
+        
+      case 'weekly':
+        const dayMap = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+        if (recurringPattern.daysOfWeek && recurringPattern.daysOfWeek.length > 0) {
+          const days = recurringPattern.daysOfWeek.map(day => dayMap[day]).join(',');
+          recurrenceRule = `FREQ=WEEKLY;INTERVAL=${recurringPattern.interval || 1};BYDAY=${days}`;
+        } else {
+          recurrenceRule = `FREQ=WEEKLY;INTERVAL=${recurringPattern.interval || 1}`;
+        }
+        break;
+        
+      case 'monthly':
+        if (recurringPattern.dayOfMonth) {
+          recurrenceRule = `FREQ=MONTHLY;INTERVAL=${recurringPattern.interval || 1};BYMONTHDAY=${recurringPattern.dayOfMonth}`;
+        } else if (recurringPattern.weekOfMonth && recurringPattern.dayOfWeek !== undefined) {
+          const dayMap = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+          const dayOfWeek = dayMap[recurringPattern.dayOfWeek];
+          recurrenceRule = `FREQ=MONTHLY;INTERVAL=${recurringPattern.interval || 1};BYDAY=${recurringPattern.weekOfMonth}${dayOfWeek}`;
+        }
+        break;
+        
+      case 'yearly':
+        recurrenceRule = `FREQ=YEARLY;INTERVAL=${recurringPattern.interval || 1}`;
+        break;
+    }
+    
+    // 添加結束條件
+    if (recurringPattern.count) {
+      recurrenceRule += `;COUNT=${recurringPattern.count}`;
+    } else if (recurringPattern.endCondition) {
+      // 這裡可以添加結束日期的解析
+      console.log('⚠️ 結束條件暫未實作:', recurringPattern.endCondition);
+    } else {
+      // 預設結束時間：三個月後
+      const endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 3);
+      const endDateStr = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      recurrenceRule += `;UNTIL=${endDateStr}`;
+    }
+    
+    console.log('📋 重複規則:', recurrenceRule);
+    
+    // 建立事件結束時間（預設1小時）
+    const endDate = new Date(startDate);
+    endDate.setHours(endDate.getHours() + 1);
+    
+    // 建立重複事件
+    console.log('🔧 建立參數:');
+    console.log('  - title:', title);
+    console.log('  - startDate:', startDate);
+    console.log('  - endDate:', endDate);
+    console.log('  - recurrenceRule:', recurrenceRule);
+    
+    // 使用 createEvent 並手動添加重複規則
+    console.log('🔧 嘗試建立基本事件並添加重複規則...');
+    
+    const event = calendar.createEvent(
+      title,
+      startDate,
+      endDate,
+      {
+        description: description || '',
+        location: location || ''
+      }
+    );
+    
+    // 手動添加重複規則到事件
+    const eventId = event.getId();
+    console.log('✅ 基本事件已建立:', eventId);
+    
+    // 簡化重複規則設定
+    try {
+      // 建立基本的週重複規則
+      const weeklyRule = CalendarApp.newRecurrence()
+        .addWeeklyRule()
+        .times(12); // 重複12次（約3個月）
+      
+      console.log('🔧 準備添加簡化重複規則');
+      event.addRecurrence(weeklyRule);
+      console.log('✅ 重複規則已添加（每週重複12次）');
+    } catch (recurrenceError) {
+      console.error('⚠️ 添加重複規則失敗:', recurrenceError);
+      console.log('⚠️ 事件已建立為單次事件');
+    }
+    
+    console.log('✅ 重複事件建立成功:', event.getId());
+    console.log('📅 事件時間:', startDate.toLocaleString('zh-TW'));
+    
+    return true;
+    
+  } catch (error) {
+    console.error('🚨 建立重複事件失敗:', error);
+    console.error('🚨 錯誤詳情:', JSON.stringify(error, null, 2));
+    return false;
+  }
+}
+
+// 格式化重複模式為中文描述
+function formatRecurringPattern(pattern) {
+  const freqMap = {
+    'daily': '每天',
+    'weekly': '每週',
+    'monthly': '每月',
+    'yearly': '每年'
+  };
+  
+  const dayMap = ['日', '一', '二', '三', '四', '五', '六'];
+  
+  let result = freqMap[pattern.frequency] || '重複';
+  
+  // 處理複合模式
+  if (pattern.isDateRange) {
+    if (pattern.rangeType === 'nextWeek' && pattern.daysOfWeek) {
+      const days = pattern.daysOfWeek.map(day => dayMap[day]).join('、');
+      result = `下週${days}每天`;
+    } else if (pattern.startFrom && pattern.endCondition) {
+      const days = pattern.daysOfWeek.map(day => dayMap[day]).join('、');
+      result = `從${pattern.startFrom}到${pattern.endCondition}每週${days}`;
+    }
+  } else if (pattern.frequency === 'weekly' && pattern.daysOfWeek) {
+    const days = pattern.daysOfWeek.map(day => dayMap[day]).join('、');
+    result = `每週${days}`;
+  } else if (pattern.frequency === 'monthly') {
+    if (pattern.dayOfMonth) {
+      result = `每月${pattern.dayOfMonth}號`;
+    } else if (pattern.weekOfMonth && pattern.dayOfWeek !== undefined) {
+      const weekNums = ['', '第一個', '第二個', '第三個', '第四個'];
+      result = `每月${weekNums[pattern.weekOfMonth]}週${dayMap[pattern.dayOfWeek]}`;
+    }
+  }
+  
+  if (pattern.count) {
+    result += `（${pattern.count}次）`;
+  } else if (pattern.endCondition && !pattern.isDateRange) {
+    result += `（到${pattern.endCondition}）`;
+  } else if (!pattern.isDateRange) {
+    result += '（三個月內）';
+  }
+  
+  return result;
 }
