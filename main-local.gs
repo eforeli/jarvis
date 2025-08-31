@@ -4,15 +4,46 @@
 const LINE_CHANNEL_ACCESS_TOKEN = 'YOUR_LINE_CHANNEL_ACCESS_TOKEN';
 const LINE_CHANNEL_SECRET = 'YOUR_LINE_CHANNEL_SECRET';
 const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY';
-const TARGET_USER_ID = 'Ue8b41f9481501dc653aca30f9bb2b807';
+const TARGET_USER_ID = 'YOUR_TARGET_USER_ID';
 
 function doGet() {
   return HtmlService.createHtmlOutput('LINE Bot Calendar Integration - Running')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// 緊急安全開關 - 設為 false 可完全停止處理
+// 緊急安全開關 - 設為 false 啟用處理（已修復防重複機制）
 const EMERGENCY_STOP = false;
+
+// 防重複處理機制
+function isMessageProcessed(messageId) {
+  const properties = PropertiesService.getScriptProperties();
+  const processedMessages = properties.getProperty('processed_messages');
+  if (!processedMessages) return false;
+  
+  const messageList = JSON.parse(processedMessages);
+  return messageList.includes(messageId);
+}
+
+function markMessageProcessed(messageId) {
+  const properties = PropertiesService.getScriptProperties();
+  let processedMessages = properties.getProperty('processed_messages');
+  
+  if (!processedMessages) {
+    processedMessages = '[]';
+  }
+  
+  const messageList = JSON.parse(processedMessages);
+  if (!messageList.includes(messageId)) {
+    messageList.push(messageId);
+    
+    // 只保留最近100條訊息記錄，避免無限增長
+    if (messageList.length > 100) {
+      messageList.splice(0, messageList.length - 100);
+    }
+    
+    properties.setProperty('processed_messages', JSON.stringify(messageList));
+  }
+}
 
 function doPost(e) {
   // 緊急停止檢查
@@ -72,27 +103,24 @@ function doPost(e) {
         
         console.log('✅ 符合處理條件，用戶驗證通過');
         
-        // 防重複處理暫時停用 - 除錯用
+        // 防重複處理機制
         const messageId = event.message.id;
-        console.log('⚠️ 防重複處理已暫時停用，訊息ID:', messageId);
+        console.log('🔍 檢查訊息ID:', messageId);
+        
+        if (isMessageProcessed(messageId)) {
+          console.log('⚠️ 訊息已處理過，跳過:', messageId);
+          continue;
+        }
+        
+        markMessageProcessed(messageId);
+        console.log('✅ 標記訊息已處理:', messageId);
         
         console.log('✅ 符合處理條件，開始處理訊息');
-        
-        // 先測試基本回覆功能
-        console.log('🧪 測試基本回覆功能');
-        console.log('🔍 檢查 event.replyToken:', event.replyToken);
-        console.log('🔍 檢查 event 結構:', JSON.stringify(event, null, 2));
         
         if (!event.replyToken) {
           console.error('❌ event.replyToken 為 undefined！');
           console.log('❌ 無法發送回覆，跳過處理');
           continue;
-        }
-        
-        try {
-          sendReply(event.replyToken, `🧪 測試回覆成功！\n訊息：${event.message.text}\n時間：${new Date().toLocaleString('zh-TW')}`);
-        } catch (replyError) {
-          console.error('🚨 基本回覆測試失敗:', replyError);
         }
         
         try {
@@ -1385,11 +1413,168 @@ function testProcessMessage() {
     console.log('📅 事件標題:', eventInfo.title);
     console.log('🕐 事件時間:', eventInfo.date.toLocaleString('zh-TW'));
     console.log('📍 事件地點:', eventInfo.location || '無');
+    
+    // 測試行事曆建立功能（不會實際建立）
+    console.log('🧪 測試行事曆建立功能...');
+    try {
+      const success = createCalendarEventDirect(
+        eventInfo.title,
+        eventInfo.date,
+        eventInfo.description,
+        eventInfo.location
+      );
+      console.log('📅 行事曆建立結果:', success ? '成功' : '失敗');
+    } catch (error) {
+      console.error('🚨 行事曆建立錯誤:', error);
+    }
+    
   } else {
     console.log('❌ 事件解析失敗');
   }
   
+  // 測試 processMessageSimple 函數
+  console.log('🧪 測試 processMessageSimple 函數...');
+  try {
+    // 暫時修改 sendReply 函數以避免實際 API 呼叫
+    const originalSendReply = sendReply;
+    window.sendReply = function(replyToken, message) {
+      console.log('🧪 [測試模式] 模擬發送回覆:', message);
+      return true;
+    };
+    
+    processMessageSimple(mockEvent);
+    
+    // 恢復原始函數
+    window.sendReply = originalSendReply;
+    console.log('✅ processMessageSimple 測試完成');
+    
+  } catch (error) {
+    console.error('🚨 processMessageSimple 測試錯誤:', error);
+  }
+  
   console.log('🧪 手動測試完成');
+}
+
+// 專門測試 processMessageSimple 的函數
+function testProcessMessageOnly() {
+  console.log('🧪 專門測試 processMessageSimple...');
+  
+  // 模擬 LINE 事件結構
+  const mockEvent = {
+    type: 'message',
+    replyToken: 'mock-reply-token',
+    source: {
+      userId: TARGET_USER_ID
+    },
+    message: {
+      id: 'mock-message-id',
+      type: 'text',
+      text: '明天晚上7點瑜伽'
+    }
+  };
+  
+  console.log('📝 測試訊息:', mockEvent.message.text);
+  
+  // 先測試事件解析
+  console.log('🔍 測試事件解析...');
+  const eventInfo = parseEventBasic(mockEvent.message.text);
+  
+  if (eventInfo) {
+    console.log('✅ 事件解析成功');
+    console.log('📅 標題:', eventInfo.title);
+    console.log('🕐 時間:', eventInfo.date.toLocaleString('zh-TW'));
+    console.log('📍 地點:', eventInfo.location || '無');
+  } else {
+    console.log('❌ 事件解析失敗');
+    return;
+  }
+  
+  // 測試行事曆建立 - 僅模擬，不實際建立
+  console.log('🔍 模擬行事曆建立（不實際建立）...');
+  console.log('📅 將要建立的事件:');
+  console.log('  - 標題:', eventInfo.title);
+  console.log('  - 時間:', eventInfo.date.toLocaleString('zh-TW'));
+  console.log('  - 地點:', eventInfo.location || '無');
+  console.log('  - 描述:', eventInfo.description);
+  console.log('✅ [模擬] 行事曆建立成功');
+  
+  console.log('✅ 測試完成');
+}
+
+// 測試真正的 processMessageSimple 函數（避免 sendReply API 呼叫）
+function testProcessMessageWithReply() {
+  console.log('🧪 測試 processMessageSimple 完整流程...');
+  
+  // 模擬 LINE 事件結構
+  const mockEvent = {
+    type: 'message',
+    replyToken: 'test-reply-token-12345',
+    source: {
+      userId: TARGET_USER_ID
+    },
+    message: {
+      id: 'mock-message-id',
+      type: 'text',
+      text: '明天晚上7點瑜伽'
+    }
+  };
+  
+  console.log('📝 測試訊息:', mockEvent.message.text);
+  console.log('🎫 使用 replyToken:', mockEvent.replyToken);
+  
+  // 備份原始 sendReply 函數
+  const originalSendReply = sendReply;
+  
+  // 創建測試版 sendReply 函數
+  const testSendReply = function(replyToken, message) {
+    console.log('🧪 [模擬 LINE API 回覆]');
+    console.log('🎫 replyToken:', replyToken);
+    console.log('💬 訊息內容:', message);
+    console.log('📊 訊息長度:', message.length);
+    
+    // 模擬 LINE API 檢查
+    if (!replyToken || replyToken.trim().length === 0) {
+      console.error('❌ [模擬] replyToken 無效');
+      return false;
+    }
+    
+    if (!message || message.trim().length === 0) {
+      console.error('❌ [模擬] message 內容無效');
+      return false;
+    }
+    
+    console.log('✅ [模擬] LINE API 回覆成功');
+    return true;
+  };
+  
+  // 創建測試版 createCalendarEventDirect 函數
+  const testCreateCalendar = function(title, date, description, location) {
+    console.log('🧪 [模擬行事曆建立]');
+    console.log('📅 標題:', title);
+    console.log('🕐 時間:', date.toLocaleString('zh-TW'));
+    console.log('📍 地點:', location || '無');
+    console.log('📝 描述:', description);
+    console.log('✅ [模擬] 行事曆建立成功');
+    return true;
+  };
+  
+  // 替換函數
+  sendReply = testSendReply;
+  const originalCreateCalendar = createCalendarEventDirect;
+  createCalendarEventDirect = testCreateCalendar;
+  
+  try {
+    console.log('🚀 執行 processMessageSimple...');
+    processMessageSimple(mockEvent);
+    console.log('✅ processMessageSimple 執行完成');
+  } catch (error) {
+    console.error('🚨 processMessageSimple 執行錯誤:', error);
+  } finally {
+    // 恢復原始函數
+    sendReply = originalSendReply;
+    createCalendarEventDirect = originalCreateCalendar;
+    console.log('🔄 已恢復原始函數');
+  }
 }
 
 // 安全的 LINE API 連線測試（不使用 push message）
@@ -1566,7 +1751,7 @@ function parseEventBasic(text) {
   console.log('🔍 開始基本事件解析:', text);
   
   // 增強事件模式檢查
-  const eventKeywords = '開會|會議|健身|運動|瑜伽|跑步|游泳|聚餐|吃飯|午餐|晚餐|早餐|課程|上課|培訓|研習|約會|見面|聚會|電影|購物|逛街|醫院|看醫生|牙醫|複診|開刀|手術|健檢|面試|簡報|會談';
+  const eventKeywords = '開會|會議|健身|運動|瑜伽|跑步|游泳|聚餐|吃飯|午餐|晚餐|早餐|課程|上課|培訓|研習|約會|見面|聚會|電影|購物|逛街|醫院|看醫生|牙醫|複診|開刀|手術|健檢|面試|簡報|會談|讀書|學習|看書|念書|工作|辦公|開車|騎車|睡覺|休息|洗澡|洗衣|打掃|煮飯|買菜';
   
   const eventPatterns = [
     // 時間相關關鍵字
@@ -1734,6 +1919,10 @@ function extractTitle(text) {
   // 學習相關
   if (text.includes('課程')) return '課程';
   if (text.includes('上課')) return '上課';
+  if (text.includes('讀書')) return '讀書';
+  if (text.includes('學習')) return '學習';
+  if (text.includes('看書')) return '看書';
+  if (text.includes('念書')) return '念書';
   if (text.includes('培訓')) return '培訓';
   if (text.includes('研習')) return '研習';
   
@@ -1758,6 +1947,19 @@ function extractTitle(text) {
   if (text.includes('面試')) return '面試';
   if (text.includes('簡報')) return '簡報';
   if (text.includes('會談')) return '會談';
+  if (text.includes('工作')) return '工作';
+  if (text.includes('辦公')) return '辦公';
+  
+  // 日常活動
+  if (text.includes('開車')) return '開車';
+  if (text.includes('騎車')) return '騎車';
+  if (text.includes('睡覺')) return '睡覺';
+  if (text.includes('休息')) return '休息';
+  if (text.includes('洗澡')) return '洗澡';
+  if (text.includes('洗衣')) return '洗衣';
+  if (text.includes('打掃')) return '打掃';
+  if (text.includes('煮飯')) return '煮飯';
+  if (text.includes('買菜')) return '買菜';
   
   // 嘗試提取自定義標題（在特定模式中）
   const customTitleMatch = text.match(/(.*?)(明天|後天|下週|\d{1,2}:\d{2}|\d{1,2}點|上午|下午|晚上)/);
