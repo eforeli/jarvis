@@ -1,10 +1,11 @@
 // LINE Bot + Google Calendar 整合系統 - 最終完整版本
 // 包含語音支援、重複事件、多日期解析、安全機制
 
-const LINE_CHANNEL_ACCESS_TOKEN = 'YOUR_LINE_CHANNEL_ACCESS_TOKEN';
-const LINE_CHANNEL_SECRET = 'YOUR_LINE_CHANNEL_SECRET';
-const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY';
-const TARGET_USER_ID = 'YOUR_TARGET_USER_ID';
+// 請在部署前填入正確的 API keys
+const LINE_CHANNEL_ACCESS_TOKEN = 'YOUR_LINE_CHANNEL_ACCESS_TOKEN'; // 填入你的 LINE Channel Access Token
+const LINE_CHANNEL_SECRET = 'YOUR_LINE_CHANNEL_SECRET';             // 填入你的 LINE Channel Secret
+const OPENAI_API_KEY = 'YOUR_OPENAI_API_KEY';                       // 填入你的 OpenAI API Key
+const TARGET_USER_ID = 'YOUR_TARGET_USER_ID';                       // 填入你的 LINE User ID
 
 function doGet() {
   return HtmlService.createHtmlOutput('LINE Bot Calendar Integration - Running')
@@ -48,9 +49,9 @@ function doPost(e) {
         
         console.log('✅ 符合處理條件，開始處理訊息');
         // 正常模式
-        // processMessage(event);
+        processMessage(event);
         // 調試模式 - 可手動切換
-        debugProcessMessage(event);
+        // debugProcessMessage(event);
         break; // 只處理第一個符合的訊息
       } else {
         console.log('⚠️ 不符合處理條件，跳過');
