@@ -152,9 +152,8 @@ async function parseEventWithOpenAI(messageText) {
   
   const prompt = `分析這個中文訊息，提取行事曆事件資訊：「${messageText}」
 
-當前時間：${new Date().toLocaleString('zh-TW')}
-今天是：${new Date().getFullYear()}/${new Date().getMonth() + 1}/${new Date().getDate()}
-今天是星期：${['日', '一', '二', '三', '四', '五', '六'][new Date().getDay()]}
+當前時間：${new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}
+今天是：${new Date().getFullYear()}/${new Date().getMonth() + 1}/${new Date().getDate()}（星期${['日', '一', '二', '三', '四', '五', '六'][new Date().getDay()]}）
 
 請回覆一個 JSON 物件，格式如下：
 
@@ -193,9 +192,12 @@ async function parseEventWithOpenAI(messageText) {
    - endDate: 重複結束日期（YYYY-MM-DD），如果是「這週」就到本週日
    - description: 給用戶看的重複說明
 5. 日期理解：
-   - "這週從今天開始，每天" = frequency:"daily", endDate:"2025-09-08"（本週日）
+   - 根據今天的星期幾，正確理解相對日期
+   - "今天"、"本週X" 要對應到正確的日期
+   - "這週從今天開始，每天" = frequency:"daily", endDate:"本週日"
    - "每週二" = frequency:"weekly", endDate:null（預設3個月）
-   - 讓 AI 直接判斷重複模式和結束時間
+   - "晚上八點" = 20:00:00（使用24小時制）
+   - 讓 AI 根據當前日期動態判斷所有相對時間
 6. 只回覆 JSON，不要其他內容`;
 
   const response = await UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
